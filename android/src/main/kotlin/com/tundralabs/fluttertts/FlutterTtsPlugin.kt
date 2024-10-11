@@ -26,6 +26,8 @@ import java.lang.reflect.Field
 import java.util.Locale
 import java.util.MissingResourceException
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 
 /** FlutterTtsPlugin  */
@@ -334,12 +336,12 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     return
                 }
                 val fileName: String? = call.argument("fileName")
-                synthesizeToFile(text!!, fileName!!)
+                val success = synthesizeToFile(text!!, fileName!!)
                 if (awaitSynthCompletion) {
                     synth = true
                     synthResult = result
                 } else {
-                    result.success(1)
+                    result.success(if (success) 1 else 0)
                 }
             }
 
@@ -650,13 +652,36 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         }
     }
 
-    private fun synthesizeToFile(text: String, fileName: String) {
+    private fun synthesizeToFile(text: String, fileName: String): Boolean {
         val fullPath: String
         val uuid: String = UUID.randomUUID().toString()
         bundle!!.putString(
             TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID,
             SYNTHESIZE_TO_FILE_PREFIX + uuid
         )
+
+        val latch = CountDownLatch(1)
+        var success = false
+
+        val listener = object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String) {}
+
+            override fun onDone(utteranceId: String) {
+                if (utteranceId.startsWith(SYNTHESIZE_TO_FILE_PREFIX)) {
+                    success = true
+                    latch.countDown()
+                }
+            }
+
+            override fun onError(utteranceId: String) {
+                if (utteranceId.startsWith(SYNTHESIZE_TO_FILE_PREFIX)) {
+                    success = false
+                    latch.countDown()
+                }
+            }
+        }
+
+        tts!!.setOnUtteranceProgressListener(listener)
 
         val result: Int =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -680,10 +705,23 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             }
 
         if (result == TextToSpeech.SUCCESS) {
-            Log.d(tag, "Successfully created file : $fullPath")
+            // Wait for the synthesis to complete or timeout after 30 seconds
+            latch.await(30, TimeUnit.SECONDS)
+            
+            if (success) {
+                Log.d(tag, "Successfully created file : $fullPath")
+            } else {
+                Log.d(tag, "Failed creating file : $fullPath")
+            }
         } else {
-            Log.d(tag, "Failed creating file : $fullPath")
+            Log.d(tag, "Failed to start synthesizing file : $fullPath")
+            success = false
         }
+
+        // Reset the UtteranceProgressListener
+        tts!!.setOnUtteranceProgressListener(utteranceProgressListener)
+
+        return success
     }
 
     private fun invokeMethod(method: String, arguments: Any) {
