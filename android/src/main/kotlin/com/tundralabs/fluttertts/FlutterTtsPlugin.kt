@@ -21,7 +21,6 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.lang.reflect.Field
 import java.util.Locale
@@ -60,7 +59,6 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
     companion object {
         private const val SILENCE_PREFIX = "SIL_"
         private const val SYNTHESIZE_TO_FILE_PREFIX = "STF_"
-        private const val SYNTHESIZE_TO_DATA_PREFIX = "STD_"
     }
 
     private fun initInstance(messenger: BinaryMessenger, context: Context) {
@@ -344,20 +342,6 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                     synthResult = result
                 } else {
                     result.success(if (success) 1 else 0)
-                }
-            }
-
-            "synthesizeToData" -> {
-                val text: String? = call.argument("text")
-                if (text == null) {
-                    result.error("INVALID_TEXT", "The text argument was null", null)
-                    return
-                }
-                val audioData = synthesizeToData(text)
-                if (audioData != null) {
-                    result.success(audioData)
-                } else {
-                    result.error("SYNTHESIS_FAILED", "Failed to synthesize text to audio data", null)
                 }
             }
 
@@ -738,75 +722,6 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
         tts!!.setOnUtteranceProgressListener(utteranceProgressListener)
 
         return success
-    }
-
-    private fun synthesizeToData(text: String): ByteArray? {
-        val uuid = UUID.randomUUID().toString()
-        bundle!!.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, SYNTHESIZE_TO_DATA_PREFIX + uuid)
-
-        val latch = CountDownLatch(1)
-        var audioData: ByteArray? = null
-
-        val listener = object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String) {}
-
-            override fun onDone(utteranceId: String) {
-                if (utteranceId.startsWith(SYNTHESIZE_TO_DATA_PREFIX)) {
-                    latch.countDown()
-                }
-            }
-
-            override fun onError(utteranceId: String) {
-                if (utteranceId.startsWith(SYNTHESIZE_TO_DATA_PREFIX)) {
-                    latch.countDown()
-                }
-            }
-        }
-
-        tts!!.setOnUtteranceProgressListener(listener)
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            val synthesisCallback = object : TextToSpeech.SynthesisCallback {
-                private val buffer = ByteArrayOutputStream()
-
-                override fun start(sampleRateInHz: Int, audioFormat: Int, channelCount: Int) {}
-
-                override fun audioAvailable(audio: ByteArray?, offset: Int, length: Int) {
-                    audio?.let { buffer.write(it, offset, length) }
-                }
-
-                override fun done() {
-                    audioData = buffer.toByteArray()
-                    latch.countDown()
-                }
-
-                override fun error() {
-                    latch.countDown()
-                }
-            }
-
-            val result = tts!!.synthesizeToCallback(text, bundle, synthesisCallback)
-
-            if (result == TextToSpeech.SUCCESS) {
-                // Wait for the synthesis to complete or timeout after 30 seconds
-                latch.await(30, TimeUnit.SECONDS)
-                
-                if (audioData != null) {
-                    Log.d(tag, "Successfully synthesized to data")
-                } else {
-                    Log.d(tag, "Failed synthesizing to data")
-                }
-            } else {
-                Log.d(tag, "Failed to start synthesizing to data")
-            }
-        } else {
-            Log.d(tag, "Synthesize to data is not supported on this Android version")
-        }
-
-        // Reset the UtteranceProgressListener
-        tts!!.setOnUtteranceProgressListener(utteranceProgressListener)
-
-        return audioData
     }
 
     private fun invokeMethod(method: String, arguments: Any) {
