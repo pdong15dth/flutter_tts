@@ -370,6 +370,11 @@ class FlutterTts {
         "fileName": fileName,
       });
 
+  /// [Future] which invokes the platform specific method for synthesizeToData
+  /// ***Android and iOS supported only***
+  Future<dynamic> synthesizeToData(String text) async =>
+      _channel.invokeMethod('synthesizeToData', text);
+
   /// [Future] which invokes the platform specific method for setLanguage
   Future<dynamic> setLanguage(String language) async =>
       await _channel.invokeMethod('setLanguage', language);
